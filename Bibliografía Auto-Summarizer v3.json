@@ -1,0 +1,964 @@
+{
+  "name": "Bibliografía Auto-Summarizer v3 (Native Notion)",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "get",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.body.data.id }}",
+          "mode": "id"
+        }
+      },
+      "id": "4e9582ac-6f60-4d1a-98f7-de900bc460ec",
+      "name": "Get Notion Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -2528,
+        1776
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract data from Notion webhook payload\n// Webhook sends: id, property_url, property_estado, property_tipo, etc.\n\nconst webhookData = $('Get Notion Page').first().json;\n\nconst pageId = webhookData.id;\nconst url = webhookData.property_url || '';\nconst status = webhookData.property_estado || '';\nconst title = webhookData.property_title || webhookData.name || '';\nconst theme = webhookData.property_theme || '';\n\nreturn [{\n  json: {\n    pageId: pageId,\n    url: url,\n    currentStatus: status,\n    currentTitle: title,\n    currentTheme: theme,\n    notionPageUrl: `https://notion.so/${pageId.replace(/-/g, '')}`\n  }\n}];"
+      },
+      "id": "dd76cfd0-8570-4d3f-b8c6-13018412d76a",
+      "name": "Extract Page Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2304,
+        1776
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "url-exists",
+              "leftValue": "={{ $json.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "id": "not-done",
+              "leftValue": "={{ $json.currentStatus }}",
+              "rightValue": "Done",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0f9ca6dd-c3fa-4ba3-8b2b-a9ea737be60a",
+      "name": "Should Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2080,
+        1776
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|select",
+              "selectValue": "Processing"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "670af6c6-2761-4998-8ee4-6c2cd4d72be9",
+      "name": "Set Status Processing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -1824,
+        1760
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preserve original data and detect URL type\nconst prevData = $('Extract Page Data').first().json;\nconst url = prevData.url;\nlet contentType = 'article';\nlet videoId = null;\n\nif (url.match(/youtube\\.com\\/watch|youtu\\.be\\//i)) {\n  contentType = 'youtube';\n  const match = url.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([a-zA-Z0-9_-]{11})/);\n  if (match) {\n    videoId = match[1];\n  }\n} else if (url.match(/twitter\\.com\\/|x\\.com\\/.*\\/status/i)) {\n  contentType = 'twitter';\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    contentType: contentType,\n    videoId: videoId\n  }\n}];"
+      },
+      "id": "007ea62d-df0a-4967-b300-e17a10a0efca",
+      "name": "Detect URL Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.contentType }}",
+                    "rightValue": "youtube",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1aaae23e-f96a-4298-8e48-020e1a92eed5"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "YouTube"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.contentType }}",
+                    "rightValue": "twitter",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "7e861724-e2ee-46cc-818e-58d914a08282"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Twitter"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.contentType }}",
+                    "rightValue": "article",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "16b95e08-8fc5-4674-b8a2-e2ec283470ff"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Article"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bd55e111-07e2-4239-bd60-3c9cd1981474",
+      "name": "Route by Content Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -1360,
+        1744
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://r.jina.ai/{{ $json.url }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "240a900d-78f0-490a-820d-8aac148f391c",
+      "name": "Extract Article (Jina)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -848,
+        2064
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "extraction-success",
+              "leftValue": "={{ $json.extractionSuccess }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "aa1f78b0-e060-4862-91f8-51a3a0c9a205",
+      "name": "Extraction OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        352,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. RECOLECTAR DATOS DE LOS NODOS PREVIOS\nconst llmText = $('LLM result').item.json.text || \"\";\n// Tomamos el pageId y metadatos del nodo de normalización previo\nconst prevData = $('Normalize Content').item.json; \n\n// 2. FUNCIÓN PARA EXTRAER ETIQUETAS XML\nconst extractTag = (tag, text) => {\n  const regex = new RegExp(`<${tag}>([\\\\s\\\\S]*?)<\\\\/${tag}>`, 'i');\n  const match = text.match(regex);\n  return match ? match[1].trim() : \"\";\n};\n\n// 3. PROCESAR LOS CAMPOS DEL OUTPUT QUE ENVIASTE\nconst category = extractTag(\"categoría\", llmText);\nconst summary = extractTag(\"resumen\", llmText);\n\n// 4. PREPARAR OBJETO PARA NOTION\nreturn [{\n  json: {\n    // ID necesario para actualizar la página correcta\n    pageId: prevData.pageId, \n    \n    // Propiedades mapeadas\n    notion_title: prevData.llmTitle,\n    notion_creator: prevData.llmAuthor,\n    \n    // Limpieza de categoría: \"Operaciones Agencia\" -> 2 palabras (Perfecto para Notion Select)\n    notion_theme: category.split(/\\s+/).slice(0, 2).join(' ') || \"Marketing\",\n    \n    // El resumen completo incluyendo \"Aplicación Growth4U\"\n    notion_summary: summary.substring(0, 1800), \n    \n    // Datos de auditoría\n    url: prevData.url,\n    content_type: prevData.contentType,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "67d205e6-b498-45a9-ad99-dfd0b3b5f2b2",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        1536
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title|title",
+              "title": "={{ $json.notion_title }}"
+            },
+            {
+              "key": "Summary|rich_text",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{ $json.notion_summary }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "key": "Theme|select",
+              "selectValue": "={{ $json.notion_theme }}"
+            },
+            {
+              "key": "Tipo|select",
+              "selectValue": "={{ $('Extraction OK?').item.json.contentType }}"
+            },
+            {
+              "key": "Autor|multi_select",
+              "multiSelectValue": "={{ $json.notion_creator }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8e981279-1852-4a8e-99c5-7c492f2527d0",
+      "name": "Update Page Success",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1184,
+        1536
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|select",
+              "selectValue": "Error"
+            },
+            {
+              "key": "ErrorMessage|rich_text"
+            },
+            {
+              "key": "ProcessedAt|date"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cc12c391-015e-4628-8536-b5a7f0b339f6",
+      "name": "Set Error (Extraction)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        656,
+        1968
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"❌ Error Procesando Bibliografía\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*URL:*\\n{{ $json.url }}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Tipo:*\\n{{ $json.contentType }}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Error:*\\n{{ $json.content.substring(0, 200) }}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"Ver en Notion\",\n            \"emoji\": true\n          },\n          \"url\": \"{{ $json.notionPageUrl }}\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "900afd4e-9c44-4640-93d2-8c0b3e5778aa",
+      "name": "Slack Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1056,
+        1968
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bibliografia-processor",
+        "options": {}
+      },
+      "id": "be704106-d941-432d-96b2-2b982988a754",
+      "name": "Notion Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -2752,
+        1776
+      ],
+      "webhookId": "bibliografia-processor"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-5.2",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        640,
+        1744
+      ],
+      "id": "77ab86ea-04e5-4fbd-bbe4-b12121e3ce71",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "E5bw97yaUSrNsuSj",
+          "name": "OpenRouter Accounts@Growth4U.io"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analiza este contenido para el reporte de Growth4U:\n\nTítulo Original: {{ $json.llmTitle }} Autor Original: {{ $json.llmAuthor }} Tipo de Contenido: {{ $json.contentType }}\n\nContenido a procesar: > {{ $json.contentForLLM }}\n\nInstrucción de salida: > Genera la respuesta técnica estructurada en: <categoría></categoría> <resumen></resumen>",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Actúa como el Director de Estrategia de Growth4U, una consultora líder en Growth Marketing y Automatización con IA. Tu objetivo es procesar información externa para extraer insights tácticos.\n\nTus Reglas de Oro:\n\n1. FORMATO XML: Responde ÚNICAMENTE con los bloques XML <categoría> y <resumen>. No incluyas introducciones ni despedidas.\n\n2. ETIQUETA <categoría>: Clasificación de marketing de máximo 2 palabras.\n\n3. ETIQUETA <resumen> (ESTRUCTURA VISUAL PARA NOTION):\n   Diseña el contenido para que sea altamente legible usando esta jerarquía:\n\n   A. 📌 TÍTULO DE IMPACTO: Un título en MAYÚSCULAS precedido de un emoticón.\n   \n   B. ⚡ RESUMEN EJECUTIVO: \n      - Un resumen del contenido (máximo 100 palabras).\n      - Usa negritas para resaltar conceptos clave.\n      - Usa viñetas (•) y emoticones para desglosar puntos importantes.\n\n   C. 🛠️ APLICACIÓN GROWTH4U: \n      - Un párrafo final titulado \"APLICACIÓN GROWTH4U:\".\n      - Explica cómo este conocimiento puede optimizar los servicios de la consultora o los sistemas que implementamos para clientes.\n\n4. REQUISITOS TÉCNICOS:\n   - Usa saltos de línea dobles (\\n\\n) para separar las secciones A, B y C.\n   - Sé generoso con los emoticones (🚀, 📈, 🤖, 💡) para guiar la lectura.\n   - Restricción de Longitud: El contenido total debe ser menor a 1800 caracteres."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        624,
+        1536
+      ],
+      "id": "6513d550-9af6-4467-b723-14c3f945121b",
+      "name": "LLM result"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/metadata",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "16f8dc17-0967-4770-b2a8-07696a410795",
+      "name": "Extract YouTube Metadata (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -976,
+        1504
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/transcript?url={{ encodeURIComponent($json.url) }}&text=true",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "e751dabe-6a31-4562-b9f4-670180ba4eb9",
+      "name": "Extract YouTube Transcripts (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -736,
+        1504
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Capturar datos del detector de URL\nconst prevData = $('Detect URL Type').first().json;\nconst contentType = prevData.contentType; \n\nlet llmTitle = \"No especificado\";\nlet llmAuthor = \"No especificado\";\nlet llmContent = \"\";\nlet thumbnailUrl = \"\";\nlet identifiedType = \"unknown\";\nlet success = false;\n\ntry {\n  // RAMA: TWITTER (Sincronizada con tu imagen)\n  if (contentType === 'twitter') {\n    identifiedType = 'twitter';\n    // Nombres exactos de tu lienzo:\n    const tweetMeta = $('Extract Twitter Video Metadata (Supadata)').item.json;\n    const tweetTranscript = $('Code in JavaScript').item.json;\n\n    llmTitle = tweetMeta.description || \"Tweet de \" + (tweetMeta.author?.displayName || \"\");\n    llmAuthor = tweetMeta.author?.displayName || tweetMeta.author?.username || \"Usuario de X\";\n    thumbnailUrl = tweetMeta.media?.thumbnailUrl || \"\";\n    llmContent = tweetTranscript.transcript || \"\";\n    \n    if (llmContent.length > 10) success = true;\n  } \n  \n  // RAMA: YOUTUBE\n  else if (contentType === 'youtube') {\n    identifiedType = 'youtube';\n    const meta = $('Extract YouTube Metadata (Supadata)').item.json;\n    const transcript = $('Extract YouTube Transcripts (Supadata)').item.json;\n\n    llmTitle = meta.title || \"Video de YouTube\";\n    llmAuthor = meta.author?.displayName || \"Creador de YouTube\";\n    thumbnailUrl = meta.thumbnailUrl || \"\";\n    \n    const segments = transcript.content || [];\n    llmContent = Array.isArray(segments) ? segments.map(s => s.text).join(' ') : transcript;\n    \n    if (llmContent.length > 10) success = true;\n  }\n\n  // RAMA: ARTÍCULOS / BLOGS\n  else if (contentType === 'web' || contentType === 'article') {\n    identifiedType = 'web_article';\n    const genericData = $input.first().json; \n    llmTitle = genericData.title || genericData.name || \"Contenido Web\";\n    llmAuthor = genericData.author || genericData.site_name || \"Autor Externo\";\n    llmContent = genericData.text || genericData.content || \"\";\n    \n    if (llmContent.length > 10) success = true;\n  }\n} catch (e) {\n  llmContent = \"Error de referencia: \" + e.message;\n  success = false;\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    contentType: identifiedType,\n    llmTitle: llmTitle.trim(),\n    llmAuthor: llmAuthor.trim(),\n    thumbnailUrl: thumbnailUrl,\n    contentForLLM: llmContent.trim(),\n    extractionSuccess: success\n  }\n}];"
+      },
+      "id": "9d097a4b-8bf8-4213-ae37-d41127449200",
+      "name": "Normalize Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Este código toma el array 'content' de Supadata y lo une\nconst contentArray = $input.item.json.content || [];\n\nconst fullTranscript = contentArray.map(segment => segment.text).join(' ').trim();\nconst isVideoEmpty = fullTranscript.length === 0;\n\nreturn {\n  transcript: isVideoEmpty ? \"El video no contiene audio o no se pudo transcribir.\" : fullTranscript,\n  tipo: \"video\",\n  emptyvideo: isVideoEmpty\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -768,
+        1760
+      ],
+      "id": "152d5815-b9b8-4b06-8813-c32fa7f6fcc5",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "https://api.supadata.ai/v1/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url.split('?')[0].replace('www.x.com', 'x.com') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1008,
+        1760
+      ],
+      "id": "89156e21-ec07-4623-bd23-17445ee1d4e9",
+      "name": "Extract Twittter Video Transcript (Supadata)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.supadata.ai/v1/metadata",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $('Route by Content Type').item.json.url.split('?')[0] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -560,
+        1760
+      ],
+      "id": "b89defa5-b205-4a96-bf73-940c9b51865d",
+      "name": "Extract Twitter Video Metadata (Supadata)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Notion Webhook1": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n-growth4u-u37225.vm.elestio.app",
+            "x-real-ip": "54.191.35.95",
+            "x-forwarded-for": "54.191.35.95",
+            "x-forwarded-proto": "https",
+            "x-forwarded-port": "443",
+            "connection": "close",
+            "content-length": "3380",
+            "user-agent": "NotionAutomation",
+            "content-type": "application/json",
+            "sentry-trace": "a21881c458364c158745e5d8c5f60ddc-a5b837b9b88061d0",
+            "baggage": "sentry-environment=production,sentry-release=20260108.0821-8c55f45,sentry-public_key=529a6d1990e5471d874257842c4f4ad8,sentry-trace_id=a21881c458364c158745e5d8c5f60ddc",
+            "traceparent": "00-2e209d4c111d9188e1dcbdbd7514e30b-f90f79d0075a4a4f-00"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "source": {
+              "type": "automation",
+              "automation_id": "2e15dacf-4f14-80ac-94e1-004db1d2279c",
+              "action_id": "2e15dacf-4f14-80ae-8211-005a45aea33c",
+              "event_id": "d0372efb-0335-4eff-af84-cb9872d5495c",
+              "attempt": 1
+            },
+            "data": {
+              "object": "page",
+              "id": "9faa1ad7-dab1-4130-a982-d7b559294ffa",
+              "created_time": "2026-01-07T16:55:00.000Z",
+              "last_edited_time": "2026-01-08T11:14:00.000Z",
+              "created_by": {
+                "object": "user",
+                "id": "130d872b-594c-81c3-8551-000220706728"
+              },
+              "last_edited_by": {
+                "object": "user",
+                "id": "130d872b-594c-81c3-8551-000220706728"
+              },
+              "cover": {
+                "type": "external",
+                "external": {
+                  "url": "https://abs.twimg.com/rweb/ssr/default/v2/og/image.png"
+                }
+              },
+              "icon": {
+                "type": "file",
+                "file": {
+                  "url": "https://prod-files-secure.s3.us-west-2.amazonaws.com/6af341b3-4e07-4589-a214-be1c8df12569/56d7296e-4eb9-4280-98b9-f4038e7d03a7/youtube-logo.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ASIAZI2LB466UAL7WIEY%2F20260108%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20260108T111500Z&X-Amz-Expires=3600&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEMP%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLXdlc3QtMiJIMEYCIQCP6z%2Fvkk9SBCl1QuHKfC9LH%2BM%2Fqg2OHG7B4KyhQm94hgIhAKKpBKjQNuGAmIeUD8NbfOJOWHMEWZNCxI3OZnEc0aydKoYECIv%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEQABoMNjM3NDIzMTgzODA1IgyxRg6o7OVP7jnKAnkq2gMXax7jWGI68lGswwUfSCwBxyHEYdwX%2B0GxZvw9C763mpIsuZ51bSp9OH%2BMlsokTev1XwpIFlIbsdzrZx0Arf9z2cA9FLgJwadjv92U3QRziAy0tXp0XKIb7eSY34ZvDFntoL6wqjd5QWE71dYATNTrIC4aJMEyzswRKFMot%2Ba5nxT8bpB7iVBodvobqhtNjdV%2FHtZPNl246ay3%2BvtFb9pcIc5cVNdJLhMZhsDniTar1AP%2BHKJLSTRDs4HHhoxGhzGE4VSHLBO1Pi9mR8Uhyw0OFYemNOpZDAFztR0fPoRBWB4sQ4KC423fS7vKWyNMNC7aTzNnrbWIPMXsnpnPjG4oVa6ynvH09vbNukw9ogs9oJFimGtQmq20ojfoJ3XTbk%2FZX4%2BjwG8nDHPk3oY96FrnbLQwnIMlUfSPJ7W04gQp43VMFwHWRYM5MebF7s7t6NaxGt6S8loFq10m0K3Tg5OFPwfF5HWciABG1LpwHRFaam2ImGi%2FXOGv3NYC2hJb7XVpDAa5TOY%2B%2F8ps9OUjLAHCbOayhKpSnIzX6dJzrRGI9Eaw9slw3BmVM7qaFbYNiLfFc4%2BRFJLPhpOAOnlwKqzeYQe2mzfeacGRZegsPdC4vr3Ojx9WwQabd8wwn4r%2BygY6pAHhcB1NPziWiLTj%2BNMC4hd4w8ggWGBS0Bvvg0NlqyvonEqSBzunW79gq4OfBo4vrWA1XlIREjIUbscPduDQc%2F1DlE09S3r7qebCWFGD4yRYeQoBU6SYYCu5KfbDawEb0PDyj2xUAyuvCzhiO2vJ8J1bCHesVWi3SKeUcRiR2j4NX5TnaC0iVnKIL3uzyx7iss%2FmJjP4uEf7ABl%2Fawf0LR1lpquEJQ%3D%3D&X-Amz-Signature=59f89e21dc9f8629504f97b169f87a8479bb9ae8e1e3e095fdaded7259b416b3&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                  "expiry_time": "2026-01-08T12:15:00.480Z"
+                }
+              },
+              "parent": {
+                "type": "data_source_id",
+                "data_source_id": "1395dacf-4f14-8172-adf7-000b1c098836",
+                "database_id": "1395dacf-4f14-81de-801f-dee0678dc51e"
+              },
+              "archived": false,
+              "in_trash": false,
+              "is_locked": false,
+              "properties": {
+                "Title": {
+                  "id": "title",
+                  "type": "title",
+                  "title": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "content": "Hayes en X: \"This guy literally automates his whole marketing team in 30 mins https://t.co/yG5maFRw5f\"",
+                        "link": null
+                      },
+                      "annotations": {
+                        "bold": false,
+                        "italic": false,
+                        "strikethrough": false,
+                        "underline": false,
+                        "code": false,
+                        "color": "default"
+                      },
+                      "plain_text": "Hayes en X: \"This guy literally automates his whole marketing team in 30 mins https://t.co/yG5maFRw5f\"",
+                      "href": null
+                    }
+                  ]
+                },
+                "URL": {
+                  "id": "%3ENlE",
+                  "type": "url",
+                  "url": "https://x.com/hayesdev_/status/2001638637520425312?s=12&t=Vkc7ZvBZl1Q7N9q_U6DGzQ"
+                }
+              },
+              "url": "https://www.notion.so/Hayes-en-X-This-guy-literally-automates-his-whole-marketing-team-in-30-mins-https-t-co-yG5maFRw5-9faa1ad7dab14130a982d7b559294ffa",
+              "public_url": null,
+              "request_id": "c07f5af8-1376-4fc3-b2c3-64b3b1c516b8"
+            }
+          },
+          "webhookUrl": "https://n8n-growth4u-u37225.vm.elestio.app/webhook/bibliografia-processor",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Get Notion Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Page Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Page Data": {
+      "main": [
+        [
+          {
+            "node": "Should Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Process?": {
+      "main": [
+        [
+          {
+            "node": "Set Status Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Processing": {
+      "main": [
+        [
+          {
+            "node": "Detect URL Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect URL Type": {
+      "main": [
+        [
+          {
+            "node": "Route by Content Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Content Type": {
+      "main": [
+        [
+          {
+            "node": "Extract YouTube Metadata (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Twittter Video Transcript (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Article (Jina)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Article (Jina)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction OK?": {
+      "main": [
+        [
+          {
+            "node": "LLM result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error (Extraction)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Update Page Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Page Success": {
+      "main": [
+        []
+      ]
+    },
+    "Set Error (Extraction)": {
+      "main": [
+        [
+          {
+            "node": "Slack Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Get Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM result",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM result": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract YouTube Metadata (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Extract YouTube Transcripts (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract YouTube Transcripts (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Content": {
+      "main": [
+        [
+          {
+            "node": "Extraction OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Extract Twitter Video Metadata (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Twittter Video Transcript (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Twitter Video Metadata (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "2a923b09-1cfe-4474-b1a2-a24ec728e65c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a7048d00ae4ff84fe52f4c7be0f3a9bcc95f4195b4bc7a65c766a63e03cd423c"
+  },
+  "id": "teb3EdZi8ELPSs8v",
+  "tags": []
+}
