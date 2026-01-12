@@ -1,0 +1,1676 @@
+{
+  "name": "Bibliografía Auto-Summarizer v4",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bibliografia-processor-v4",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Notion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "bibliografia-processor-v4"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "get",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.body.data.id }}",
+          "mode": "id"
+        }
+      },
+      "id": "get-notion-page",
+      "name": "Get Notion Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [220, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract data from Notion page\nconst pageData = $input.first().json;\n\n// Extract URL from properties\nlet url = '';\nif (pageData.properties?.URL?.url) {\n  url = pageData.properties.URL.url;\n} else if (pageData.property_url) {\n  url = pageData.property_url;\n}\n\n// Extract title\nlet title = '';\nif (pageData.properties?.Title?.title?.[0]?.plain_text) {\n  title = pageData.properties.Title.title[0].plain_text;\n} else if (pageData.name) {\n  title = pageData.name;\n}\n\n// Extract current status\nlet status = '';\nif (pageData.properties?.Status?.select?.name) {\n  status = pageData.properties.Status.select.name;\n}\n\nreturn [{\n  json: {\n    pageId: pageData.id,\n    url: url,\n    currentTitle: title,\n    currentStatus: status,\n    notionPageUrl: `https://notion.so/${pageData.id.replace(/-/g, '')}`,\n    rawProperties: pageData.properties\n  }\n}];"
+      },
+      "id": "extract-page-data",
+      "name": "Extract Page Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "url-exists",
+              "leftValue": "={{ $json.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "id": "not-done",
+              "leftValue": "={{ $json.currentStatus }}",
+              "rightValue": "Done",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "not-error",
+              "leftValue": "={{ $json.currentStatus }}",
+              "rightValue": "Error",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-url",
+      "name": "Validate URL",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Extract Page Data').item.json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|select",
+              "selectValue": "Processing"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-status-processing",
+      "name": "Set Status Processing",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [880, 200],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Detect platform from URL\nconst prevData = $('Extract Page Data').first().json;\nconst url = prevData.url.toLowerCase();\n\nlet platform = 'article'; // default\nlet contentSubtype = 'standard';\nlet cleanUrl = prevData.url;\n\n// YouTube detection\nif (url.match(/youtube\\.com\\/watch|youtu\\.be\\/|youtube\\.com\\/shorts/i)) {\n  platform = 'youtube';\n  // Extract video ID\n  const match = prevData.url.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/|youtube\\.com\\/shorts\\/)([a-zA-Z0-9_-]{11})/);\n  if (match) {\n    contentSubtype = match[1]; // video ID\n  }\n}\n// Twitter/X detection\nelse if (url.match(/twitter\\.com\\/|x\\.com\\//i)) {\n  platform = 'twitter';\n  // Clean URL - remove tracking parameters\n  cleanUrl = prevData.url.split('?')[0].replace('www.x.com', 'x.com').replace('www.twitter.com', 'twitter.com');\n  // We'll detect video vs text later in the Twitter branch\n  contentSubtype = 'unknown'; // will be determined by API response\n}\n// LinkedIn detection\nelse if (url.match(/linkedin\\.com\\/posts|linkedin\\.com\\/feed\\/update/i)) {\n  platform = 'linkedin';\n}\n// Instagram detection\nelse if (url.match(/instagram\\.com\\/p\\/|instagram\\.com\\/reel\\//i)) {\n  platform = 'instagram';\n}\n// Facebook detection\nelse if (url.match(/facebook\\.com\\/.*\\/posts|facebook\\.com\\/.*\\/videos|fb\\.watch/i)) {\n  platform = 'facebook';\n}\n// TikTok detection (bonus - uses Supadata)\nelse if (url.match(/tiktok\\.com\\/@.*\\/video/i)) {\n  platform = 'tiktok';\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    platform: platform,\n    contentSubtype: contentSubtype,\n    cleanUrl: cleanUrl\n  }\n}];"
+      },
+      "id": "detect-platform",
+      "name": "Detect Platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "youtube",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "YouTube"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "twitter",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Twitter"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "linkedin",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "LinkedIn"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "instagram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Instagram"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "facebook",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Facebook"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "tiktok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "TikTok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "article",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Article"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route-by-platform",
+      "name": "Route by Platform",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/metadata",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "youtube-metadata",
+      "name": "YouTube Metadata (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, -200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $('Detect Platform').item.json.url }}"
+            },
+            {
+              "name": "text",
+              "value": "true"
+            },
+            {
+              "name": "mode",
+              "value": "auto"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "youtube-transcript",
+      "name": "YouTube Transcript (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, -200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge YouTube metadata and transcript\nconst platformData = $('Detect Platform').first().json;\nconst metadata = $('YouTube Metadata (Supadata)').first().json;\nconst transcript = $('YouTube Transcript (Supadata)').first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\nlet title = '';\nlet author = '';\nlet thumbnailUrl = '';\nlet duration = 0;\nlet publishDate = null;\nlet metrics = {};\n\ntry {\n  // Check for errors in responses\n  if (metadata.error || transcript.error) {\n    errorDetails = metadata.error || transcript.error;\n  } else {\n    // Extract metadata\n    title = metadata.title || platformData.currentTitle || 'YouTube Video';\n    author = metadata.author?.name || metadata.author?.displayName || 'YouTube Creator';\n    thumbnailUrl = metadata.thumbnailUrl || '';\n    duration = metadata.duration || 0;\n    publishDate = metadata.createdAt || metadata.publishedAt || null;\n    \n    metrics = {\n      views: metadata.stats?.views || metadata.viewCount || 0,\n      likes: metadata.stats?.likes || metadata.likeCount || 0,\n      comments: metadata.stats?.comments || metadata.commentCount || 0\n    };\n    \n    // Extract transcript content\n    if (transcript.content) {\n      if (Array.isArray(transcript.content)) {\n        content = transcript.content.map(s => s.text).join(' ');\n      } else {\n        content = transcript.content;\n      }\n    }\n    \n    if (content && content.length > 10) {\n      extractionSuccess = true;\n    } else {\n      errorDetails = 'Transcript empty or too short';\n    }\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: platformData.pageId,\n    url: platformData.url,\n    notionPageUrl: platformData.notionPageUrl,\n    platform: 'youtube',\n    contentType: 'video',\n    title: title,\n    author: author,\n    content: content.substring(0, 50000), // Limit content length\n    thumbnailUrl: thumbnailUrl,\n    duration: duration,\n    publishDate: publishDate,\n    language: transcript.lang || 'unknown',\n    metrics: metrics,\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-youtube",
+      "name": "Merge YouTube Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, -200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~twitter-scraper/runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"startUrls\": [{ \"url\": \"{{ $json.cleanUrl }}\" }],\n  \"maxItems\": 1,\n  \"addUserInfo\": true\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "twitter-metadata",
+      "name": "Twitter Scraper (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $json.data.id + '/dataset/items' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "twitter-get-results",
+      "name": "Twitter Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine if tweet has video based on Apify response\nconst platformData = $('Detect Platform').first().json;\nconst results = $('Twitter Get Results').first().json;\n\nlet hasVideo = false;\nlet tweetText = '';\nlet author = '';\nlet authorHandle = '';\nlet tweetData = null;\n\ntry {\n  // Apify returns an array of tweets\n  const tweet = Array.isArray(results) ? results[0] : results;\n  tweetData = tweet;\n  \n  if (tweet) {\n    // Check for video in media array\n    if (tweet.media && Array.isArray(tweet.media)) {\n      hasVideo = tweet.media.some(m => m.type === 'video' || m.type === 'animated_gif');\n    }\n    // Also check extendedEntities for video\n    if (!hasVideo && tweet.extendedEntities?.media) {\n      hasVideo = tweet.extendedEntities.media.some(m => m.type === 'video' || m.type === 'animated_gif');\n    }\n    \n    // Extract tweet text (Apify uses 'text' or 'full_text')\n    tweetText = tweet.full_text || tweet.text || '';\n    \n    // Extract author info\n    author = tweet.author?.name || tweet.user?.name || '';\n    authorHandle = tweet.author?.userName || tweet.author?.username || tweet.user?.screen_name || '';\n    \n    console.log('Tweet text:', tweetText.substring(0, 100));\n    console.log('Has video:', hasVideo);\n  }\n} catch (e) {\n  console.log('Error detecting twitter type:', e.message);\n  hasVideo = false;\n}\n\nreturn [{\n  json: {\n    ...platformData,\n    hasVideo: hasVideo,\n    tweetText: tweetText,\n    author: author,\n    authorHandle: authorHandle,\n    tweetData: tweetData\n  }\n}];"
+      },
+      "id": "detect-twitter-type",
+      "name": "Detect Twitter Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.hasVideo }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Video"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.hasVideo }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-twitter-type",
+      "name": "Switch Twitter Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2320, 0]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.cleanUrl }}"
+            },
+            {
+              "name": "text",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "twitter-video-transcript",
+      "name": "Twitter Video Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2560, -80],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge Twitter video data\nconst prevData = $('Detect Twitter Type').first().json;\nconst transcript = $('Twitter Video Transcript').first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\n\ntry {\n  if (transcript.error) {\n    errorDetails = transcript.error;\n  } else if (transcript.content) {\n    if (Array.isArray(transcript.content)) {\n      content = transcript.content.map(s => s.text).join(' ');\n    } else {\n      content = transcript.content;\n    }\n    \n    if (content && content.length > 10) {\n      extractionSuccess = true;\n    } else {\n      // Fallback to tweet text if transcript is empty (video might have no audio)\n      content = prevData.tweetText || '';\n      if (content.length > 10) {\n        extractionSuccess = true;\n        errorDetails = 'Video has no audio - using tweet text';\n      } else {\n        errorDetails = 'E005: Video has no transcribable audio';\n      }\n    }\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: prevData.pageId,\n    url: prevData.url,\n    notionPageUrl: prevData.notionPageUrl,\n    platform: 'twitter',\n    contentType: 'video',\n    title: prevData.tweetText?.substring(0, 100) || 'Twitter Video',\n    author: prevData.author || prevData.authorHandle || 'Twitter User',\n    content: content.substring(0, 50000),\n    thumbnailUrl: prevData.metadata?.media?.thumbnailUrl || '',\n    duration: prevData.metadata?.media?.duration || 0,\n    publishDate: prevData.metadata?.createdAt || null,\n    language: transcript.lang || 'unknown',\n    metrics: {\n      views: prevData.metadata?.stats?.views || 0,\n      likes: prevData.metadata?.stats?.likes || 0,\n      comments: prevData.metadata?.stats?.replies || 0,\n      shares: prevData.metadata?.stats?.retweets || 0\n    },\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails && !extractionSuccess ? 'E005' : null\n  }\n}];"
+      },
+      "id": "merge-twitter-video",
+      "name": "Merge Twitter Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2800, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Twitter text/thread using Apify data\nconst prevData = $('Detect Twitter Type').first().json;\nconst tweet = prevData.tweetData;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\n\ntry {\n  // Get tweet text from Apify response\n  content = prevData.tweetText || '';\n  \n  // If we have the full tweet data, extract more details\n  if (tweet?.full_text) {\n    content = tweet.full_text;\n  } else if (tweet?.text) {\n    content = tweet.text;\n  }\n  \n  if (content && content.length > 10) {\n    extractionSuccess = true;\n  } else {\n    errorDetails = 'Could not extract tweet text from Apify response';\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\n// Extract metrics from Apify format\nconst metrics = {\n  views: tweet?.viewCount || tweet?.views || 0,\n  likes: tweet?.likeCount || tweet?.favorite_count || 0,\n  comments: tweet?.replyCount || tweet?.reply_count || 0,\n  shares: tweet?.retweetCount || tweet?.retweet_count || 0\n};\n\n// Get thumbnail from media if available\nlet thumbnailUrl = '';\nif (tweet?.media && tweet.media.length > 0) {\n  thumbnailUrl = tweet.media[0].url || tweet.media[0].media_url_https || '';\n}\n\nreturn [{\n  json: {\n    pageId: prevData.pageId,\n    url: prevData.url,\n    notionPageUrl: prevData.notionPageUrl,\n    platform: 'twitter',\n    contentType: 'text',\n    title: content?.substring(0, 100) || 'Tweet',\n    author: prevData.author || prevData.authorHandle || 'Twitter User',\n    content: content.substring(0, 50000),\n    thumbnailUrl: thumbnailUrl,\n    duration: 0,\n    publishDate: tweet?.createdAt || tweet?.created_at || null,\n    language: tweet?.lang || 'unknown',\n    metrics: metrics,\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-twitter-text",
+      "name": "Merge Twitter Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2560, 80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/curious_coder~linkedin-post-search-scraper/runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"urls\": [\"{{ $json.url }}\"]\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "linkedin-apify",
+      "name": "LinkedIn Scraper (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "REQUIRES APIFY CREDENTIALS - Replace APIFY_CREDENTIALS_ID with actual credential ID"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $json.data.id + '/dataset/items' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "linkedin-get-results",
+      "name": "LinkedIn Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process LinkedIn data from Apify\nconst platformData = $('Detect Platform').first().json;\nconst results = $input.first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\nlet title = '';\nlet author = '';\n\ntry {\n  const post = Array.isArray(results) ? results[0] : results;\n  \n  if (post) {\n    content = post.text || post.postText || post.content || '';\n    title = content.substring(0, 100) || 'LinkedIn Post';\n    author = post.authorName || post.author?.name || post.postedBy || 'LinkedIn User';\n    \n    if (content && content.length > 10) {\n      extractionSuccess = true;\n    } else {\n      errorDetails = 'Could not extract LinkedIn post content';\n    }\n  } else {\n    errorDetails = 'No data returned from LinkedIn scraper';\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: platformData.pageId,\n    url: platformData.url,\n    notionPageUrl: platformData.notionPageUrl,\n    platform: 'linkedin',\n    contentType: 'post',\n    title: title,\n    author: author,\n    content: content.substring(0, 50000),\n    thumbnailUrl: '',\n    duration: 0,\n    publishDate: null,\n    language: 'unknown',\n    metrics: {\n      likes: 0,\n      comments: 0,\n      shares: 0\n    },\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-linkedin",
+      "name": "Merge LinkedIn Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-api-scraper/runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"directUrls\": [\"{{ $json.url }}\"],\n  \"resultsLimit\": 1\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "instagram-apify",
+      "name": "Instagram Scraper (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $json.data.id + '/dataset/items' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "instagram-get-results",
+      "name": "Instagram Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Instagram data from Apify\nconst platformData = $('Detect Platform').first().json;\nconst results = $input.first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\nlet title = '';\nlet author = '';\n\ntry {\n  const post = Array.isArray(results) ? results[0] : results;\n  \n  if (post) {\n    content = post.caption || post.text || '';\n    title = content.substring(0, 100) || 'Instagram Post';\n    author = post.ownerUsername || post.owner?.username || 'Instagram User';\n    \n    if (content && content.length > 5) {\n      extractionSuccess = true;\n    } else if (post.type === 'Video' || post.type === 'Reel') {\n      // For videos without caption, mark as needing transcript\n      content = '[Video content - caption not available]';\n      extractionSuccess = true;\n    } else {\n      errorDetails = 'Could not extract Instagram post content';\n    }\n  } else {\n    errorDetails = 'No data returned from Instagram scraper. Post might be private.';\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: platformData.pageId,\n    url: platformData.url,\n    notionPageUrl: platformData.notionPageUrl,\n    platform: 'instagram',\n    contentType: 'post',\n    title: title,\n    author: author,\n    content: content.substring(0, 50000),\n    thumbnailUrl: '',\n    duration: 0,\n    publishDate: null,\n    language: 'unknown',\n    metrics: {\n      likes: 0,\n      comments: 0\n    },\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-instagram",
+      "name": "Merge Instagram Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~facebook-posts-scraper/runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"startUrls\": [{\"url\": \"{{ $json.url }}\"}],\n  \"maxPosts\": 1\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "facebook-apify",
+      "name": "Facebook Scraper (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 600],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $json.data.id + '/dataset/items' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "facebook-get-results",
+      "name": "Facebook Get Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 600],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Growth4UApify",
+          "name": "Growth 4U Apify"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Facebook data from Apify\nconst platformData = $('Detect Platform').first().json;\nconst results = $input.first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\nlet title = '';\nlet author = '';\n\ntry {\n  const post = Array.isArray(results) ? results[0] : results;\n  \n  if (post) {\n    content = post.text || post.postText || post.message || '';\n    title = content.substring(0, 100) || 'Facebook Post';\n    author = post.pageName || post.userName || post.user?.name || 'Facebook User';\n    \n    if (content && content.length > 10) {\n      extractionSuccess = true;\n    } else {\n      errorDetails = 'Could not extract Facebook post content';\n    }\n  } else {\n    errorDetails = 'No data returned from Facebook scraper. Post might be private.';\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: platformData.pageId,\n    url: platformData.url,\n    notionPageUrl: platformData.notionPageUrl,\n    platform: 'facebook',\n    contentType: 'post',\n    title: title,\n    author: author,\n    content: content.substring(0, 50000),\n    thumbnailUrl: '',\n    duration: 0,\n    publishDate: null,\n    language: 'unknown',\n    metrics: {\n      likes: 0,\n      comments: 0,\n      shares: 0\n    },\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-facebook",
+      "name": "Merge Facebook Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 600]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/metadata",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "tiktok-metadata",
+      "name": "TikTok Metadata (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 800],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $('Detect Platform').item.json.url }}"
+            },
+            {
+              "name": "text",
+              "value": "true"
+            },
+            {
+              "name": "mode",
+              "value": "auto"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tiktok-transcript",
+      "name": "TikTok Transcript (Supadata)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 800],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "02Pk5zQzVVlLzcbb",
+          "name": "Supadata (Youtube, Web Scraping)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge TikTok metadata and transcript\nconst platformData = $('Detect Platform').first().json;\nconst metadata = $('TikTok Metadata (Supadata)').first().json;\nconst transcript = $('TikTok Transcript (Supadata)').first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\nlet title = '';\nlet author = '';\n\ntry {\n  if (metadata.error || transcript.error) {\n    errorDetails = metadata.error || transcript.error;\n  } else {\n    title = metadata.title || metadata.description?.substring(0, 100) || 'TikTok Video';\n    author = metadata.author?.displayName || metadata.author?.username || 'TikTok Creator';\n    \n    if (transcript.content) {\n      if (Array.isArray(transcript.content)) {\n        content = transcript.content.map(s => s.text).join(' ');\n      } else {\n        content = transcript.content;\n      }\n    }\n    \n    if (content && content.length > 10) {\n      extractionSuccess = true;\n    } else {\n      // Try to use description as fallback\n      content = metadata.description || '';\n      if (content.length > 10) {\n        extractionSuccess = true;\n      } else {\n        errorDetails = 'Could not extract TikTok content';\n      }\n    }\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: platformData.pageId,\n    url: platformData.url,\n    notionPageUrl: platformData.notionPageUrl,\n    platform: 'tiktok',\n    contentType: 'video',\n    title: title,\n    author: author,\n    content: content.substring(0, 50000),\n    thumbnailUrl: metadata.thumbnailUrl || '',\n    duration: metadata.duration || 0,\n    publishDate: metadata.createdAt || null,\n    language: transcript.lang || 'unknown',\n    metrics: {\n      views: metadata.stats?.views || 0,\n      likes: metadata.stats?.likes || 0,\n      comments: metadata.stats?.comments || 0,\n      shares: metadata.stats?.shares || 0\n    },\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-tiktok",
+      "name": "Merge TikTok Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 800]
+    },
+    {
+      "parameters": {
+        "url": "=https://r.jina.ai/{{ $json.url }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "article-jina",
+      "name": "Article Extractor (Jina)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 1000],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process article data from Jina AI Reader\nconst platformData = $('Detect Platform').first().json;\nconst response = $input.first().json;\n\nlet extractionSuccess = false;\nlet errorDetails = null;\nlet content = '';\nlet title = '';\nlet author = '';\n\ntry {\n  // Jina returns markdown content directly as the response body\n  // or as a text/markdown in the data field\n  const rawContent = typeof response === 'string' ? response : (response.data || response.content || response.text || '');\n  \n  if (rawContent && rawContent.length > 50) {\n    content = rawContent;\n    \n    // Try to extract title from markdown (first # heading)\n    const titleMatch = content.match(/^#\\s+(.+)$/m);\n    title = titleMatch ? titleMatch[1] : platformData.currentTitle || 'Web Article';\n    \n    // Try to extract author from common patterns\n    const authorMatch = content.match(/(?:by|author|written by)[:\\s]+([^\\n]+)/i);\n    author = authorMatch ? authorMatch[1].trim() : 'Unknown Author';\n    \n    extractionSuccess = true;\n  } else {\n    errorDetails = 'Jina AI returned empty or insufficient content';\n  }\n} catch (e) {\n  errorDetails = 'Processing error: ' + e.message;\n}\n\nreturn [{\n  json: {\n    pageId: platformData.pageId,\n    url: platformData.url,\n    notionPageUrl: platformData.notionPageUrl,\n    platform: 'web',\n    contentType: 'article',\n    title: title.substring(0, 200),\n    author: author,\n    content: content.substring(0, 50000),\n    thumbnailUrl: '',\n    duration: 0,\n    publishDate: null,\n    language: 'unknown',\n    metrics: {},\n    extractionSuccess: extractionSuccess,\n    errorDetails: errorDetails,\n    errorCode: errorDetails ? 'E004' : null\n  }\n}];"
+      },
+      "id": "merge-article",
+      "name": "Merge Article Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 1000]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-all-branches",
+      "name": "Merge All Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2560, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "extraction-success",
+              "leftValue": "={{ $json.extractionSuccess }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-extraction-success",
+      "name": "Extraction Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2800, 400]
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-4o",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [3060, 500],
+      "id": "llm-model",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "E5bw97yaUSrNsuSj",
+          "name": "OpenRouter Accounts@Growth4U.io"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analiza el siguiente contenido y genera un reporte estructurado.\n\nCONTENIDO:\n- Plataforma: {{ $json.platform }}\n- Tipo: {{ $json.contentType }}\n- Título Original: {{ $json.title }}\n- Autor: {{ $json.author }}\n- Contenido:\n{{ $json.content.substring(0, 15000) }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Actúa como el Director de Estrategia de Growth4U, una consultora de Growth Marketing y Automatización con IA.\n\nREGLAS CRÍTICAS:\n1. DETECTA el idioma del contenido y genera el resumen EN ESE MISMO IDIOMA\n2. Usa formato XML estricto para la respuesta\n3. Sé conciso pero completo\n4. NO incluyas introducciones ni despedidas\n\nGENERA EXACTAMENTE ESTA ESTRUCTURA XML:\n\n<idioma>código ISO 639-1 (es, en, pt, fr, de, etc.)</idioma>\n\n<categoria>Máximo 2 palabras que clasifican el contenido</categoria>\n\n<keywords>3-5 palabras clave separadas por comas</keywords>\n\n<titulo_mejorado>Un título conciso y descriptivo (máx 100 caracteres)</titulo_mejorado>\n\n<resumen>\n📌 TÍTULO DE IMPACTO EN MAYÚSCULAS\n\n⚡ RESUMEN EJECUTIVO:\n• Punto principal 1 (con **negritas** en conceptos clave)\n• Punto principal 2\n• Punto principal 3\n\n🔑 PUNTOS CLAVE:\n• Insight 1\n• Insight 2\n• Insight 3\n\n🛠️ APLICACIÓN GROWTH4U:\nPárrafo explicando cómo Growth4U puede aprovechar este contenido para mejorar sus procesos internos y de delivery para clientes.\n</resumen>\n\n<contenido_formateado>\n## Contenido Original Extraído\n\n### Información del Autor\n- **Autor**: [nombre del autor]\n- **Plataforma**: [plataforma]\n\n### Contenido Principal\n[Contenido completo formateado con headers donde sea apropiado, identificando secciones relevantes]\n</contenido_formateado>"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [3040, 300],
+      "id": "llm-analysis",
+      "name": "LLM Analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM response and prepare data for Notion\nconst extractedData = $('Extraction Success?').item.json;\nconst llmResponse = $input.first().json.text || '';\n\n// Helper function to extract XML tags\nconst extractTag = (tag, text) => {\n  const regex = new RegExp(`<${tag}>([\\\\s\\\\S]*?)<\\\\/${tag}>`, 'i');\n  const match = text.match(regex);\n  return match ? match[1].trim() : '';\n};\n\n// Extract all fields from LLM response\nconst idioma = extractTag('idioma', llmResponse) || 'es';\nconst categoria = extractTag('categoria', llmResponse) || extractTag('categoría', llmResponse) || 'General';\nconst keywords = extractTag('keywords', llmResponse) || '';\nconst tituloMejorado = extractTag('titulo_mejorado', llmResponse) || extractedData.title;\nconst resumen = extractTag('resumen', llmResponse) || '';\nconst contenidoFormateado = extractTag('contenido_formateado', llmResponse) || '';\n\n// Clean up categoria to max 2 words\nconst categoriaClean = categoria.split(/\\s+/).slice(0, 2).join(' ');\n\n// Parse keywords into array\nconst keywordsArray = keywords.split(',').map(k => k.trim()).filter(k => k.length > 0).slice(0, 5);\n\nreturn [{\n  json: {\n    // Original data\n    pageId: extractedData.pageId,\n    url: extractedData.url,\n    notionPageUrl: extractedData.notionPageUrl,\n    platform: extractedData.platform,\n    contentType: extractedData.contentType,\n    \n    // Extracted/improved data\n    title: tituloMejorado.substring(0, 200),\n    author: extractedData.author,\n    \n    // LLM analysis results\n    language: idioma,\n    category: categoriaClean,\n    keywords: keywordsArray,\n    summary: resumen.substring(0, 2000),\n    formattedContent: contenidoFormateado,\n    \n    // Metadata\n    thumbnailUrl: extractedData.thumbnailUrl,\n    duration: extractedData.duration,\n    publishDate: extractedData.publishDate,\n    metrics: extractedData.metrics,\n    \n    // Processing info\n    processedAt: new Date().toISOString(),\n    extractionSuccess: true\n  }\n}];"
+      },
+      "id": "parse-llm-response",
+      "name": "Parse LLM Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Title|title",
+              "title": "={{ $json.title }}"
+            },
+            {
+              "key": "Summary|rich_text",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{ $json.summary.substring(0, 2000) }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "key": "Theme|select",
+              "selectValue": "={{ $json.category }}"
+            },
+            {
+              "key": "Tipo|select",
+              "selectValue": "={{ $json.contentType }}"
+            },
+            {
+              "key": "Autor|multi_select",
+              "multiSelectValue": "={{ $json.author }}"
+            },
+            {
+              "key": "Status|select",
+              "selectValue": "Done"
+            },
+            {
+              "key": "Plataforma|select",
+              "selectValue": "={{ $json.platform }}"
+            },
+            {
+              "key": "Idioma|select",
+              "selectValue": "={{ $json.language }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-notion-success",
+      "name": "Update Notion Properties",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [3520, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/blocks/{{ $('Parse LLM Response').item.json.pageId }}/children",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"children\": [\n    {\n      \"object\": \"block\",\n      \"type\": \"divider\",\n      \"divider\": {}\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"heading_2\",\n      \"heading_2\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": \"📋 Resumen Generado\" } }]\n      }\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"paragraph\",\n      \"paragraph\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": {{ JSON.stringify($('Parse LLM Response').item.json.summary.substring(0, 2000)) }} } }]\n      }\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"divider\",\n      \"divider\": {}\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"heading_2\",\n      \"heading_2\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": \"📄 Contenido Extraído\" } }]\n      }\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"paragraph\",\n      \"paragraph\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": {{ JSON.stringify($('Parse LLM Response').item.json.formattedContent.substring(0, 2000)) }} } }]\n      }\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"divider\",\n      \"divider\": {}\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"callout\",\n      \"callout\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": \"Procesado: {{ $('Parse LLM Response').item.json.processedAt }} | Plataforma: {{ $('Parse LLM Response').item.json.platform }} | Idioma: {{ $('Parse LLM Response').item.json.language }}\" } }],\n        \"icon\": { \"emoji\": \"🤖\" }\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "append-notion-blocks",
+      "name": "Append Content Blocks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3760, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error classification and message generation\nconst extractedData = $input.first().json;\n\n// Error code mapping\nconst errorCodes = {\n  'E001': { type: 'invalid_url', message: 'La URL proporcionada no es válida o no es accesible', action: 'Verifica que la URL esté completa y sea pública' },\n  'E002': { type: 'unsupported_platform', message: 'Esta plataforma aún no está soportada', action: 'Usa YouTube, Twitter, LinkedIn, Instagram, Facebook o artículos web' },\n  'E003': { type: 'private_content', message: 'El contenido es privado o requiere autenticación', action: 'Asegúrate de que el contenido sea público' },\n  'E004': { type: 'extraction_failed', message: 'No se pudo extraer el contenido de la página', action: 'Intenta con una URL diferente o contacta soporte' },\n  'E005': { type: 'no_audio', message: 'El video no contiene audio transcribible', action: 'Este tipo de contenido requiere procesamiento manual' },\n  'E006': { type: 'timeout', message: 'La extracción tardó demasiado tiempo', action: 'Intenta nuevamente en unos minutos' },\n  'E007': { type: 'api_unavailable', message: 'El servicio de extracción no está disponible', action: 'Reintentando automáticamente...' },\n  'E008': { type: 'api_limit', message: 'Se alcanzó el límite de la API de extracción', action: 'Contacta al administrador para verificar cuotas' }\n};\n\n// Determine error code\nlet errorCode = extractedData.errorCode || 'E004';\nlet errorInfo = errorCodes[errorCode] || errorCodes['E004'];\n\n// Build error message for user\nconst userMessage = `## ⚠️ Error de Procesamiento\\n\\n**Tipo**: [${errorCode}] ${errorInfo.message}\\n**Fecha**: ${new Date().toISOString()}\\n**URL**: ${extractedData.url}\\n\\n### Descripción\\n${extractedData.errorDetails || errorInfo.message}\\n\\n### Acción Sugerida\\n${errorInfo.action}`;\n\n// Build technical log\nconst technicalLog = JSON.stringify({\n  errorCode: errorCode,\n  errorType: errorInfo.type,\n  platform: extractedData.platform,\n  url: extractedData.url,\n  details: extractedData.errorDetails,\n  timestamp: new Date().toISOString()\n}, null, 2);\n\nreturn [{\n  json: {\n    pageId: extractedData.pageId,\n    url: extractedData.url,\n    notionPageUrl: extractedData.notionPageUrl,\n    platform: extractedData.platform,\n    contentType: extractedData.contentType,\n    errorCode: errorCode,\n    errorType: errorInfo.type,\n    errorMessage: errorInfo.message,\n    userMessage: userMessage,\n    technicalLog: technicalLog,\n    actionSuggested: errorInfo.action\n  }\n}];"
+      },
+      "id": "classify-error",
+      "name": "Classify Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3040, 600]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.pageId }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|select",
+              "selectValue": "Error"
+            },
+            {
+              "key": "ErrorType|select",
+              "selectValue": "={{ $json.errorType }}"
+            },
+            {
+              "key": "ErrorMessage|rich_text",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{ $json.errorMessage }}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-notion-error",
+      "name": "Update Notion Error",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [3280, 600],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/blocks/{{ $('Classify Error').item.json.pageId }}/children",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"children\": [\n    {\n      \"object\": \"block\",\n      \"type\": \"callout\",\n      \"callout\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": {{ JSON.stringify($('Classify Error').item.json.userMessage) }} } }],\n        \"icon\": { \"emoji\": \"⚠️\" },\n        \"color\": \"red_background\"\n      }\n    },\n    {\n      \"object\": \"block\",\n      \"type\": \"toggle\",\n      \"toggle\": {\n        \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": \"📋 Log Técnico (click para expandir)\" } }],\n        \"children\": [\n          {\n            \"object\": \"block\",\n            \"type\": \"code\",\n            \"code\": {\n              \"rich_text\": [{ \"type\": \"text\", \"text\": { \"content\": {{ JSON.stringify($('Classify Error').item.json.technicalLog) }} } }],\n              \"language\": \"json\"\n            }\n          }\n        ]\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "append-error-blocks",
+      "name": "Append Error Blocks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3520, 600],
+      "credentials": {
+        "notionApi": {
+          "id": "5Oo5om15SSiHCmIa",
+          "name": "Notion Growth4U"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"⚠️ Error Procesando Bibliografía\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Código:*\\n{{ $('Classify Error').item.json.errorCode }}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Tipo:*\\n{{ $('Classify Error').item.json.errorType }}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Plataforma:*\\n{{ $('Classify Error').item.json.platform }}\"\n        },\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"*Mensaje:*\\n{{ $('Classify Error').item.json.errorMessage }}\"\n        }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*URL:* {{ $('Classify Error').item.json.url }}\"\n      }\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"Ver en Notion\",\n            \"emoji\": true\n          },\n          \"url\": \"{{ $('Classify Error').item.json.notionPageUrl }}\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "slack-error-notification",
+      "name": "Slack Error Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3760, 600],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle case where URL is missing or page already processed\nconst pageData = $('Extract Page Data').first().json;\n\nreturn [{\n  json: {\n    message: 'Page skipped',\n    reason: !pageData.url ? 'No URL provided' : `Status is ${pageData.currentStatus}`,\n    pageId: pageData.pageId,\n    skippedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "skip-processing",
+      "name": "Skip Processing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400]
+    }
+  ],
+  "connections": {
+    "Notion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Notion Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Page Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Page Data": {
+      "main": [
+        [
+          {
+            "node": "Validate URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate URL": {
+      "main": [
+        [
+          {
+            "node": "Set Status Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Processing": {
+      "main": [
+        [
+          {
+            "node": "Detect Platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Platform": {
+      "main": [
+        [
+          {
+            "node": "Route by Platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Platform": {
+      "main": [
+        [
+          {
+            "node": "YouTube Metadata (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Twitter Scraper (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LinkedIn Scraper (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Instagram Scraper (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Facebook Scraper (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "TikTok Metadata (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Article Extractor (Jina)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Metadata (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "YouTube Transcript (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Transcript (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Merge YouTube Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge YouTube Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Scraper (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Twitter Get Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Get Results": {
+      "main": [
+        [
+          {
+            "node": "Detect Twitter Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Twitter Type": {
+      "main": [
+        [
+          {
+            "node": "Switch Twitter Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Twitter Type": {
+      "main": [
+        [
+          {
+            "node": "Twitter Video Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Twitter Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Video Transcript": {
+      "main": [
+        [
+          {
+            "node": "Merge Twitter Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Twitter Video": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Twitter Text": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Scraper (Apify)": {
+      "main": [
+        [
+          {
+            "node": "LinkedIn Get Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Get Results": {
+      "main": [
+        [
+          {
+            "node": "Merge LinkedIn Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge LinkedIn Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram Scraper (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Instagram Get Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram Get Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Instagram Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Instagram Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook Scraper (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Facebook Get Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook Get Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Facebook Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Facebook Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok Metadata (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "TikTok Transcript (Supadata)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok Transcript (Supadata)": {
+      "main": [
+        [
+          {
+            "node": "Merge TikTok Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge TikTok Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Article Extractor (Jina)": {
+      "main": [
+        [
+          {
+            "node": "Merge Article Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Article Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Branches": {
+      "main": [
+        [
+          {
+            "node": "Extraction Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction Success?": {
+      "main": [
+        [
+          {
+            "node": "LLM Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [
+          {
+            "node": "Update Notion Properties",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notion Properties": {
+      "main": [
+        [
+          {
+            "node": "Append Content Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Error": {
+      "main": [
+        [
+          {
+            "node": "Update Notion Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Notion Error": {
+      "main": [
+        [
+          {
+            "node": "Append Error Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Error Blocks": {
+      "main": [
+        [
+          {
+            "node": "Slack Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "v4-initial",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "bibliografia-extractor-v4"
+  },
+  "id": "bibliografia-auto-summarizer-v4",
+  "tags": []
+}
